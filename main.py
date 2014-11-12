@@ -1,21 +1,37 @@
-import webapp2, os, cgi, datetime, sys, time, logging, json
+import webapp2, os, cgi, datetime, sys, time, logging, json, StringIO
 import colorsys
-print sys.modules
 from PIL import Image
+from google.appengine.ext import ndb
+
+class ImageBlock(ndb.Model):
+	color = ndb.StringProperty(required=True, indexed=True)
+	contents = ndb.BlobProperty(required=True)
 
 def recolor(im, r, g, b):
-	h, l, s = colorsys.rgb_to_hls(r/255.0, g/255.0, b/255.0)
 	result = im.copy()
 	pix = result.load()
 	for y in range(result.size[1]):
 		for x in range(result.size[0]):
 			r2, g2, b2, a = pix[x, y]
-			h2, l2, s2 = colorsys.rgb_to_hls(r2/255.0, g2/255.0, b2/255.0)
-			r3, g3, b3 = colorsys.hls_to_rgb(h, l2, s)
-			pix[x, y] = (int(r3*255.99), int(g3*255.99), int(b3*255.99), a)
+			if a != 0:
+				pix[x, y] = (r, g, b, a)
 	return result
 
 basecolor = Image.open("basecolor.png").resize((320, 320))
+
+def get_recolored(r, g, b):
+	color = "%.2x/%.2x/%.2x" % (r, g, b)
+	found = ImageBlock.query().filter(ImageBlock.color == color).get()
+	if found != None:
+		return found.contents
+	sout = StringIO.StringIO()
+	out = recolor(basecolor, r, g, b)
+	out.save(sout, "png")
+	sgot = sout.getvalue()
+	sout.close()
+	created = ImageBlock(color=color, contents=sgot)
+	created.put()
+	return sgot
 
 class MainPage(webapp2.RequestHandler):
 	def get(self):
@@ -54,7 +70,10 @@ class ImagePage(webapp2.RequestHandler):
 		r = int(self.request.get("r", 0))
 		g = int(self.request.get("g", 255))
 		b = int(self.request.get("b", 0))
-		recolor(basecolor, r, g, b).save(self.response, "png")
+		r = min(255, max(0, r))
+		g = min(255, max(0, g))
+		b = min(255, max(0, b))
+		self.response.write(get_recolored(r, g, b))
 
 application = webapp2.WSGIApplication([
 	('/', MainPage),
